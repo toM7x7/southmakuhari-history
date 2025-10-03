@@ -1,8 +1,14 @@
 ﻿{
   "version": 2,
-  "framework": "vite",
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -16,5 +22,9 @@
         { "key": "Cache-Control", "value": "public, max-age=0, s-maxage=86400, stale-while-revalidate=3600" }
       ]
     }
+  ],
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
