@@ -20,8 +20,9 @@ export class WebXRBoard {
 
   constructor({ parent }: WebXRBoardOptions) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    this.renderer.setPixelRatio(window.devicePixelRatio);
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    const pixelRatio = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
+    this.renderer.setPixelRatio(pixelRatio);
+    this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType('local-floor');
     this.renderer.domElement.style.display = 'none';
@@ -172,6 +173,6 @@ export class WebXRBoard {
   }
 
   private handleResize() {
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(window.innerWidth, window.innerHeight, false);
   }
 }

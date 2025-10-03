@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl, { Map as MapLibreMap, type StyleSpecification } from 'maplibre-gl';
 import './App.css';
 import { WebXRBoard, type XRMode } from './xr/WebXRBoard';
@@ -57,7 +57,20 @@ const BASE_STYLE: StyleSpecification = {
   ],
 };
 
+const MOBILE_BREAKPOINT = 768;
 const FADE_DURATION = 350;
+const QUICK_LOOK_USDZ = '/models/board.usdz';
+const QUICK_LOOK_GLB = '/models/board.glb';
+
+const getMobileMatch = () =>
+  typeof window !== 'undefined'
+    ? window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches
+    : false;
+
+const detectIOS = () => {
+  if (typeof navigator === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as unknown as { MSStream?: unknown }).MSStream;
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -82,6 +95,12 @@ function App() {
   const [xrModes, setXrModes] = useState<XRMode[]>([]);
   const [isCheckingXR, setIsCheckingXR] = useState(true);
   const [xrError, setXrError] = useState<string | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(getMobileMatch);
+  const [isMobileControlsOpen, setIsMobileControlsOpen] = useState(getMobileMatch);
+  const [hasQuickLookAsset, setHasQuickLookAsset] = useState(false);
+  const [hasQuickLookCompanion, setHasQuickLookCompanion] = useState(false);
+
+  const isIOS = useMemo(detectIOS, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -106,6 +125,19 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+    const updateMatches = (matches: boolean) => {
+      setIsMobileViewport(matches);
+      setIsMobileControlsOpen(matches);
+    };
+
+    updateMatches(mediaQuery.matches);
+    const listener = (event: MediaQueryListEvent) => updateMatches(event.matches);
+    mediaQuery.addEventListener('change', listener);
+    return () => mediaQuery.removeEventListener('change', listener);
+  }, []);
+
+  useEffect(() => {
     if (!timeline || mapRef.current || !mapContainerRef.current) return;
 
     const initialSpot = timeline.spots.find((spot) => spot.id === activeSpotId) ?? timeline.spots[0];
@@ -115,8 +147,8 @@ function App() {
       style: BASE_STYLE,
       center: initialSpot ? [initialSpot.lng, initialSpot.lat] : [140.05792, 35.65944],
       zoom: initialSpot?.z ?? 14,
-      maxZoom: 18,
-      minZoom: 10,
+      maxZoom: isMobileViewport ? 16 : 18,
+      minZoom: isMobileViewport ? 9.5 : 10,
       attributionControl: false,
       fadeDuration: FADE_DURATION,
     });
@@ -139,7 +171,36 @@ function App() {
       map.remove();
       mapRef.current = null;
     };
-  }, [timeline, activeSpotId]);
+  }, [timeline, activeSpotId, isMobileViewport]);
+
+  useEffect(() => {
+    const map = mapRef.current as MapLibreMap & {
+      touchPitch?: { enable: () => void; disable: () => void };
+    } | null;
+    if (!isMapReady || !map) return;
+
+    map.setMaxZoom(isMobileViewport ? 16 : 18);
+    map.setMinZoom(isMobileViewport ? 9.5 : 10);
+
+    if (isMobileViewport) {
+      map.dragRotate.disable();
+      map.touchZoomRotate.disableRotation();
+      map.touchPitch?.disable();
+    } else {
+      map.dragRotate.enable();
+      map.touchZoomRotate.enableRotation();
+      map.touchPitch?.enable();
+    }
+  }, [isMobileViewport, isMapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!isMapReady || !map) return;
+
+    const sidePadding = isMobileViewport ? 18 : 40;
+    const bottomPadding = isMobileViewport && isMobileControlsOpen ? 240 : 48;
+    map.setPadding({ top: 40, left: sidePadding, right: sidePadding, bottom: bottomPadding });
+  }, [isMobileViewport, isMobileControlsOpen, isMapReady]);
 
   useEffect(() => {
     if (!xrContainerRef.current || xrBoardRef.current) return;
@@ -165,6 +226,30 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!isIOS) return;
+    let cancelled = false;
+
+    import('@google/model-viewer').catch(() => undefined);
+
+    const checkAsset = (url: string, setter: (available: boolean) => void) => {
+      fetch(url, { method: 'HEAD' })
+        .then((response) => {
+          if (!cancelled) setter(response.ok);
+        })
+        .catch(() => {
+          if (!cancelled) setter(false);
+        });
+    };
+
+    checkAsset(QUICK_LOOK_USDZ, setHasQuickLookAsset);
+    checkAsset(QUICK_LOOK_GLB, setHasQuickLookCompanion);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isIOS]);
+
+  useEffect(() => {
     if (!isMapReady || !timeline) return;
     const map = mapRef.current;
     if (!map) return;
@@ -175,9 +260,9 @@ function App() {
       animateLayerOpacity(map, layerId, targetOpacity, layerAnimationsRef.current);
 
       if (era.fallbackLayer) {
-        const fallbackLayerId = fallbackLayerIdForEra(era.id);
+        const fallbackId = fallbackLayerIdForEra(era.id);
         const fallbackOpacity = index === selectedEraIndex ? 0.65 : 0;
-        animateLayerOpacity(map, fallbackLayerId, fallbackOpacity, layerAnimationsRef.current);
+        animateLayerOpacity(map, fallbackId, fallbackOpacity, layerAnimationsRef.current);
       }
     });
 
@@ -201,8 +286,12 @@ function App() {
     if (!era) return;
 
     const center = map.getCenter();
-    const zoom = clamp(Math.round(map.getZoom()), 12, 17);
+    const zoomCeil = isMobileViewport ? 16 : 17;
+    const zoomFloor = isMobileViewport ? 11 : 12;
+    const zoom = clamp(Math.round(map.getZoom()), zoomFloor, zoomCeil);
     const extension = ERA_TILE_EXTENSION[era.layer] ?? 'jpg';
+    const fallbackExtension = era.fallbackLayer ? ERA_TILE_EXTENSION[era.fallbackLayer] ?? 'jpg' : undefined;
+    const tileSpan = isMobileViewport ? 2 : 3;
 
     board.queueTextureLoader(() =>
       loadTileTexture({
@@ -212,9 +301,11 @@ function App() {
         zoom,
         extension,
         fallbackLayer: era.fallbackLayer,
+        fallbackExtension,
+        tileSpan,
       }),
     );
-  }, [selectedEraIndex, timeline]);
+  }, [selectedEraIndex, timeline, isMobileViewport]);
 
   useEffect(() => {
     if (!timeline || !xrBoardRef.current || !mapRef.current) return;
@@ -242,15 +333,15 @@ function App() {
       setActiveSpotId(spotId);
       mapRef.current.flyTo({
         center: [spot.lng, spot.lat],
-        zoom: clamp(spot.z, 12, 17),
+        zoom: clamp(spot.z, 12, isMobileViewport ? 16 : 17),
         duration: 800,
       });
     },
-    [timeline],
+    [timeline, isMobileViewport],
   );
 
   const currentEra = useMemo(() => timeline?.eras[selectedEraIndex] ?? null, [timeline, selectedEraIndex]);
-
+  const xrAvailable = xrModes.length > 0;
   const xrButtonLabel = useMemo(() => {
     if (isCheckingXR) return 'XRサポート確認中';
     if (xrModes.includes('immersive-ar')) return 'ARモードで見る';
@@ -258,7 +349,10 @@ function App() {
     return 'XR未対応端末';
   }, [isCheckingXR, xrModes]);
 
-  const xrButtonDisabled = isCheckingXR || xrModes.length === 0;
+  const showQuickLook = isIOS && !xrAvailable && hasQuickLookAsset;
+  const quickLookMissing = isIOS && !xrAvailable && !hasQuickLookAsset;
+  const controlsAreExpanded = !isMobileViewport || isMobileControlsOpen;
+  const showArPrepHint = (isMobileViewport && xrModes.includes('immersive-ar')) || showQuickLook;
 
   const handleEnterXR = async () => {
     if (!xrBoardRef.current) return;
@@ -302,10 +396,16 @@ function App() {
           </div>
         </header>
 
-        <div className="overlay__controls">
+        <div
+          className="overlay__controls"
+          data-mobile={isMobileViewport ? 'true' : 'false'}
+          data-open={controlsAreExpanded ? 'true' : 'false'}
+        >
           <div className="control-card control-card--spots">
-            <span className="control-title">スポット</span>
-            <div className="control-body">
+            <div className="control-header">
+              <span className="control-title">スポット</span>
+            </div>
+            <div className="control-body control-body--spots">
               {timeline?.spots.map((spot) => (
                 <button
                   key={spot.id}
@@ -351,7 +451,7 @@ function App() {
                 <span className="control-placeholder">年代データを読み込み中...</span>
               )}
               {currentEra?.fallbackLayer && (
-                <span className="control-hint control-hint--warning">※ 補完レイヤー：{currentEra.fallbackLayer}</span>
+                <span className="control-hint control-hint--warning">※ 撮影欠損を {currentEra.fallbackLayer} で補完表示中</span>
               )}
             </div>
           </div>
@@ -361,21 +461,62 @@ function App() {
               <span className="control-title">XR</span>
             </div>
             <div className="control-body">
-              <button
-                type="button"
-                className="xr-button"
-                disabled={xrButtonDisabled}
-                onClick={handleEnterXR}
-              >
-                {xrButtonLabel}
-              </button>
+              {xrAvailable && (
+                <button
+                  type="button"
+                  className="xr-button"
+                  disabled={!xrAvailable || isCheckingXR}
+                  onClick={handleEnterXR}
+                >
+                  {xrButtonLabel}
+                </button>
+              )}
+
+              {showQuickLook && (
+                <>
+                  {hasQuickLookCompanion &&
+                    createElement('model-viewer', {
+                      style: { width: 0, height: 0, position: 'absolute', visibility: 'hidden' },
+                      src: QUICK_LOOK_GLB,
+                      'ios-src': QUICK_LOOK_USDZ,
+                      ar: true,
+                      'ar-modes': 'quick-look',
+                      'ar-scale': 'fixed',
+                    })}
+                  <a className="quicklook-button" rel="ar" href={QUICK_LOOK_USDZ}>
+                    Quick Lookで見る
+                  </a>
+                </>
+              )}
+
+              {quickLookMissing && (
+                <span className="control-hint control-hint--warning">
+                  Quick Look用の`/public/models/board.usdz`を配置するとARフォールバックが有効になります。
+                </span>
+              )}
+
               <span className="control-hint">
-                対応端末ではWebXR（AR/VR）へ遷移。未対応環境ではQuick Lookフォールバックを次段で実装予定。
+                対応端末ではWebXR（AR/VR）へ遷移。未対応環境ではQuick Lookフォールバックを提供します。
               </span>
+              {showArPrepHint && (
+                <span className="control-hint control-hint--info">AR開始時は端末をゆっくり動かし床面を検出してください。</span>
+              )}
               {xrError && <span className="control-error">{xrError}</span>}
             </div>
           </div>
         </div>
+
+        {isMobileViewport && (
+          <button
+            type="button"
+            className={`mobile-toggle${controlsAreExpanded ? ' mobile-toggle--active' : ''}`}
+            onClick={() => setIsMobileControlsOpen((prev) => !prev)}
+            aria-pressed={controlsAreExpanded}
+            aria-label={controlsAreExpanded ? '操作パネルを閉じる' : '操作パネルを開く'}
+          >
+            {controlsAreExpanded ? 'パネルを閉じる' : '操作パネル'}
+          </button>
+        )}
 
         {dataError && <div className="data-error">{dataError}</div>}
         <div ref={xrContainerRef} className="xr-canvas-host" />
@@ -545,3 +686,5 @@ function animateLayerOpacity(
 }
 
 export default App;
+
+
