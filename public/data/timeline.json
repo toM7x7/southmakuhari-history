@@ -1,0 +1,15 @@
+﻿{
+  "eras": [
+    {"id": "1945-50", "title": "1945–50", "layer": "ort_USA10"},
+    {"id": "1961-69", "title": "1961–69", "layer": "ort_old10"},
+    {"id": "1974-78", "title": "1974–78", "layer": "gazo1"},
+    {"id": "1979-83", "title": "1979–83", "layer": "gazo2"},
+    {"id": "1984-86", "title": "1984–86*", "layer": "gazo3", "fallbackLayer": "gazo4"},
+    {"id": "1987-90", "title": "1987–90", "layer": "gazo4"},
+    {"id": "now", "title": "現在", "layer": "ort"}
+  ],
+  "spots": [
+    {"id": "makuhari", "name": "幕張駅", "lat": 35.65944, "lng": 140.05792, "z": 16},
+    {"id": "kaihin", "name": "海浜幕張駅", "lat": 35.64833, "lng": 140.04186, "z": 16}
+  ]
+}
